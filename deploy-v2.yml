@@ -1,0 +1,138 @@
+---
+  - hosts: mig
+    vars: 
+     date: "{{lookup('pipe','date +%Y%m%d%H%M')}}"
+     packFolderLocation: "/mnt/MIG-52/pack{{date}}"
+     packFolderName: "{{packFolderLocation}}/wso2telcoids-2.0.2-SNAPSHOT"
+     mig21_home: "/mnt/mig21_product"
+     import_dbs: "yes"
+
+    tasks:
+#-------------------Create Folders to keep resources-------------------
+
+     - name: mkdir "{{mig21_home}}" for the wso2telcoids-2.0.2-SNAPSHOT
+       file:
+        path: "{{mig21_home}}"
+        mode: 0755 
+        state: directory
+#-------------------Create Folders to keep resources-------------------
+#-------------------Extract wso2telcoids-2.0.2-SNAPSHOT-------------------
+     - unarchive:
+        src: "wso2telcoids-2.0.2-SNAPSHOT.zip"
+        dest: "{{mig21_home}}"
+        copy: no
+#-------------------Extract wso2telcoids-2.0.2-SNAPSHOT-------------------
+#-------------------Copy ussdstub, playground to wso2telcoids-2.0.2-SNAPSHOT-------------------
+     - copy:
+        src: "{{playbook_dir}}/prereq/ussdstub.war"
+        dest: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/repository/deployment/server/webapps/ussdstub.war"
+        owner: root
+        group: root
+        mode: 0644
+
+     - copy:
+        src: "{{playbook_dir}}/prereq/playground2.war"
+        dest: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/repository/deployment/server/webapps/playground2.war"
+        owner: root
+        group: root
+        mode: 0644
+
+#-------------------Copy ussdstub, playground to wso2telcoids-2.0.2-SNAPSHOT-------------------
+#-------------------Copy mysql connector-------------------
+     - name: copying mysql-connector-java to [carbon_home]/repository/components/lib
+       copy:
+        src: "{{ item }}"
+        dest: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/repository/components/lib/"
+        owner: root
+        group: root
+        mode: 0644
+       with_fileglob:
+        - "{{playbook_dir}}/prereq/mysql-connector-java-*.jar"
+#-------------------Copy mysql connector-------------------
+#-------------------update mysql password in master-datasources.xml -------------------
+     - name: setting password for mysql in [carbon_home]/repository/conf/datasources/master-datasources.xml
+       replace: 
+         dest: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/repository/conf/datasources/master-datasources.xml"
+         regexp: '(\s+)<password></password>?'
+         replace: '\n<password>root</password>'
+         backup: yes
+#-------------------update mysql password in master-datasources.xml -------------------
+#-------------------check db exists -------------------
+     - name: check if mig_identity DB exists
+       shell: mysql -uroot -proot -e 'SHOW DATABASES;' | grep mig_identity
+       register: dbstatus
+       ignore_errors: True
+
+     - name: remove the mig_apimgt database
+       shell: mysql -uroot -proot -D mig_identity -e "DROP DATABASE mig_identity"
+       when: dbstatus.rc == 0  and import_dbs == "yes"
+ 
+     - name: check if mig_connectdb DB exists
+       shell: mysql -uroot -proot -e 'SHOW DATABASES;' | grep mig_connectdb
+       register: dbstatus
+       ignore_errors: True
+
+     - name: remove the mig_connectdb database
+       shell: mysql -uroot -proot -D mig_connectdb -e "DROP DATABASE mig_connectdb"
+       when: dbstatus.rc == 0  and import_dbs == "yes"
+
+     - name: check if mig_regdb DB exists
+       shell: mysql -uroot -proot -e 'SHOW DATABASES;' | grep mig_regdb
+       register: dbstatus
+       ignore_errors: True
+
+     - name: remove the mig_regdb database
+       shell: mysql -uroot -proot -D mig_regdb -e "DROP DATABASE mig_regdb"
+       when: dbstatus.rc == 0  and import_dbs == "yes"
+  
+     - name: check if mig_userdb DB exists
+       shell: mysql -uroot -proot -e 'SHOW DATABASES;' | grep mig_userdb
+       register: dbstatus
+       ignore_errors: True
+
+     - name: remove the mig_userdb database
+       shell: mysql -uroot -proot -D mig_userdb -e "DROP DATABASE mig_userdb"
+       when: dbstatus.rc == 0  and import_dbs == "yes"
+
+     - name: Import DB 
+       shell: mysql -uroot -proot  < "{{playbook_dir}}/dbscripts/mig_identity_mysql-5.7.sql"
+       when: import_dbs == "yes"   
+
+     - name: Import DB
+       shell: mysql -uroot -proot  < "{{playbook_dir}}/dbscripts/mig_connectdb.sql"
+       when: import_dbs == "yes"    
+
+     - name: Import DB
+       shell: mysql -uroot -proot  < "{{playbook_dir}}/dbscripts/mig_regdb.sql"
+       when: import_dbs == "yes" 
+
+     - name: Import DB
+       shell: mysql -uroot -proot  < "{{playbook_dir}}/dbscripts/mig_userdb.sql"
+       when: import_dbs == "yes"
+ 
+#      - name: mkdir /mnt/MIG-52/pack{{date}} for the new pack
+#       file:
+#       path: "{{packFolderLocation}}"
+#         mode: 0755 
+#         state: directory 
+
+#      - name: mkdir wso2telcoids-2.0.2-SNAPSHOT for the new pack
+#        file:
+#         path: "{{packFolderName}}"
+#         mode: 0755
+#         state: directory
+
+     - name: edit wso2server.sh to bind jacocoagent to the identity server
+       lineinfile: 
+         dest: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/bin/wso2server.sh"
+         line: 'JAVA_OPTS="$JAVA_OPTS -javaagent:{{playbook_dir}}/prereq/jacocoagent.jar=address=*,output=tcpserver,port=6300"'
+         insertbefore: '# For Cygwin, ensure paths are in UNIX format before anything is touched'     
+
+     - name: Stop IS 
+       shell: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/bin/./wso2server.sh stop"
+       ignore_errors: True
+
+     - name: Start IS
+       shell: "{{mig21_home}}/wso2telcoids-2.0.2-SNAPSHOT/bin/./wso2server.sh"
+       ignore_errors: True
+

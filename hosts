@@ -1,0 +1,3 @@
+[mig]
+#52.53.173.127 ansible_ssh_user=ubuntu
+localhost   ansible_connection=local
